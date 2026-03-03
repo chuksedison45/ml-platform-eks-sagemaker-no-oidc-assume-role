@@ -2,11 +2,10 @@ name: Build & Deploy
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
 
 env:
@@ -20,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS creds (OIDC)
+      - name: Configure AWS creds (static keys -> assume role)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -37,7 +36,7 @@ jobs:
         run: |
           TAG="${GITHUB_SHA}"
           REG="${{ secrets.ECR_REGISTRY }}"
-          # Build services
+
           docker build -t "$REG/${{ secrets.ECR_REPO_FRAUD }}:$TAG" services/fraud_service
           docker build -t "$REG/${{ secrets.ECR_REPO_RECS }}:$TAG" services/recs_service
           docker build -t "$REG/${{ secrets.ECR_REPO_FORECAST }}:$TAG" services/forecast_service
@@ -58,7 +57,13 @@ jobs:
           aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
           kubectl version --client
 
-            - name: Apply namespaces/quotas first
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/kustomize
+          kustomize version
+
+      - name: Apply namespaces/quotas first
         run: |
           kubectl apply -f k8s/base/namespaces.yaml
           kubectl apply -f k8s/base/quotas.yaml
@@ -67,30 +72,41 @@ jobs:
       - name: Create AWS credentials secrets (B2)
         run: |
           for ns in fraud recs forecast; do
-            kubectl -n "$ns" create secret generic aws-credentials               --from-literal=AWS_ACCESS_KEY_ID="${{ secrets.POD_AWS_ACCESS_KEY_ID }}"               --from-literal=AWS_SECRET_ACCESS_KEY="${{ secrets.POD_AWS_SECRET_ACCESS_KEY }}"               --from-literal=AWS_SESSION_TOKEN="${{ secrets.POD_AWS_SESSION_TOKEN }}"               --dry-run=client -o yaml | kubectl apply -f -
+            kubectl -n "$ns" create secret generic aws-credentials \
+              --from-literal=AWS_ACCESS_KEY_ID="${{ secrets.POD_AWS_ACCESS_KEY_ID }}" \
+              --from-literal=AWS_SECRET_ACCESS_KEY="${{ secrets.POD_AWS_SECRET_ACCESS_KEY }}" \
+              --from-literal=AWS_SESSION_TOKEN="${{ secrets.POD_AWS_SESSION_TOKEN }}" \
+              --dry-run=client -o yaml | kubectl apply -f -
           done
 
-- name: Deploy with kustomize
+      - name: Deploy with kustomize
         run: |
           TAG="${GITHUB_SHA}"
           REG="${{ secrets.ECR_REGISTRY }}"
           OVER="k8s/overlays/${KUSTOMIZE_OVERLAY}"
 
-          # Patch image tags in-place
           pushd "$OVER"
-          kustomize edit set image             FRAUD_IMAGE="$REG/${{ secrets.ECR_REPO_FRAUD }}:$TAG"             RECS_IMAGE="$REG/${{ secrets.ECR_REPO_RECS }}:$TAG"             FORECAST_IMAGE="$REG/${{ secrets.ECR_REPO_FORECAST }}:$TAG"             GATEWAY_IMAGE="$REG/${{ secrets.ECR_REPO_GATEWAY }}:$TAG"             DASHBOARD_IMAGE="$REG/${{ secrets.ECR_REPO_DASHBOARD }}:$TAG"
+          kustomize edit set image \
+            FRAUD_IMAGE="$REG/${{ secrets.ECR_REPO_FRAUD }}:$TAG" \
+            RECS_IMAGE="$REG/${{ secrets.ECR_REPO_RECS }}:$TAG" \
+            FORECAST_IMAGE="$REG/${{ secrets.ECR_REPO_FORECAST }}:$TAG" \
+            GATEWAY_IMAGE="$REG/${{ secrets.ECR_REPO_GATEWAY }}:$TAG" \
+            DASHBOARD_IMAGE="$REG/${{ secrets.ECR_REPO_DASHBOARD }}:$TAG"
           popd
 
           kubectl apply -k "$OVER"
 
       - name: Rollout checks
         run: |
-          kubectl -n fraud rollout status deploy/fraud --timeout=180s
-          kubectl -n recs rollout status deploy/recs --timeout=180s
-          kubectl -n forecast rollout status deploy/forecast --timeout=180s
-          kubectl -n platform rollout status deploy/gateway --timeout=180s
-          kubectl -n platform rollout status deploy/dashboard --timeout=180s
+          kubectl -n fraud rollout status deploy/fraud --timeout=240s
+          kubectl -n recs rollout status deploy/recs --timeout=240s
+          kubectl -n forecast rollout status deploy/forecast --timeout=240s
+          kubectl -n platform rollout status deploy/gateway --timeout=240s
+          kubectl -n platform rollout status deploy/dashboard --timeout=240s
 
-      - name: Quick health check (gateway)
+      - name: Health check (gateway)
         run: |
           kubectl -n platform get svc gateway dashboard
+          kubectl -n platform run curl --rm -i --restart=Never \
+            --image=curlimages/curl:8.5.0 -- \
+            sh -c "curl -sf http://gateway/health && curl -sf http://gateway/status"
