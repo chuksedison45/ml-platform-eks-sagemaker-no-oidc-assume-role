@@ -42,3 +42,18 @@ spec:
         cpu: "200m"
         memory: "256Mi"
       type: Container
+
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: lr-platform
+  namespace: platform
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: "200m"
+        memory: "256Mi"
+      default:
+        cpu: "500m"
+        memory: "512Mi"
