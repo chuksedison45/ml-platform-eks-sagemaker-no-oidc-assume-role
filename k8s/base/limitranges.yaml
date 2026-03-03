@@ -42,7 +42,7 @@ spec:
         cpu: "200m"
         memory: "256Mi"
       type: Container
-
+---
 apiVersion: v1
 kind: LimitRange
 metadata:
