@@ -37,7 +37,7 @@ import pandas as pd
 def get_image_uri(region: str) -> str:
     try:
         from sagemaker import image_uris
-        return image_uris.retrieve(framework="deepar", region=region)
+        return image_uris.retrieve(framework="forecasting-deepar", region=region, version="1")
     except Exception:
         raise RuntimeError(
             "Could not resolve DeepAR image URI. Install SageMaker SDK v2 helper:\n"
@@ -127,9 +127,17 @@ def main():
         AlgorithmSpecification={"TrainingImage": image_uri, "TrainingInputMode": "File"},
         RoleArn=args.role_arn,
         InputDataConfig=[
-            {"ChannelName": "train", "DataSource": {"S3DataSource": {"S3DataType": "S3Prefix", "S3Uri": s3_train, "S3DataDistributionType": "FullyReplicated"}}, "ContentType": "application/json"},
-            {"ChannelName": "test", "DataSource": {"S3DataSource": {"S3DataType": "S3Prefix", "S3Uri": s3_test, "S3DataDistributionType": "FullyReplicated"}}, "ContentType": "application/json"},
-        ],
+            {
+                "ChannelName": "train",
+                "DataSource": {"S3DataSource": {"S3DataType": "S3Prefix", "S3Uri": s3_train, "S3DataDistributionType": "FullyReplicated"}},
+                "ContentType": "json",
+            },
+            {
+                "ChannelName": "test",
+                "DataSource": {"S3DataSource": {"S3DataType": "S3Prefix", "S3Uri": s3_test, "S3DataDistributionType": "FullyReplicated"}},
+                "ContentType": "json",
+            },
+            ],
         OutputDataConfig={"S3OutputPath": output_path},
         ResourceConfig={"InstanceType": args.train_instance_type, "InstanceCount": 1, "VolumeSizeInGB": 30},
         StoppingCondition={"MaxRuntimeInSeconds": 3600},

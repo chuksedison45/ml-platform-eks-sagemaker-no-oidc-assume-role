@@ -50,7 +50,8 @@ def write_recordio(path: str, X: sparse.csr_matrix, y: np.ndarray) -> None:
             "and SciPy:\n"
             "  pip install scipy\n"
         ) from e
-    write_spmatrix_to_sparse_tensor(path, X, y)
+    with open(path, "wb") as f:
+        write_spmatrix_to_sparse_tensor(f, X, y)
 
 
 def load_csv_s3(s3_uri: str, s3_client) -> pd.DataFrame:
@@ -163,7 +164,6 @@ def main():
             "num_factors": "64",
             "epochs": "10",
             "clip_gradient": "5.0",
-            "learning_rate": "0.05",
         },
     )
     print(f"TrainingJob: {job_name}")

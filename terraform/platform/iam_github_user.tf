@@ -7,13 +7,12 @@
 # Bootstrap user (keys live in GitHub Secrets)
 resource "aws_iam_user" "github_actions" {
   name = "${var.project_name}-github-actions"
-  tags = local.tags
 }
 
 # Deploy role (assumed by github_actions user)
 data "aws_iam_policy_document" "github_deploy_trust" {
   statement {
-    effect = "Allow"
+    effect  = "Allow"
     actions = ["sts:AssumeRole"]
     principals {
       type        = "AWS"
@@ -25,7 +24,6 @@ data "aws_iam_policy_document" "github_deploy_trust" {
 resource "aws_iam_role" "github_deploy" {
   name               = "${var.project_name}-github-deploy-role"
   assume_role_policy = data.aws_iam_policy_document.github_deploy_trust.json
-  tags               = local.tags
 }
 
 # Permissions for deploy role: ECR push + EKS cluster describe
@@ -68,8 +66,8 @@ resource "aws_iam_role_policy_attachment" "github_deploy_attach" {
 # Allow the IAM user to assume the deploy role (nothing else)
 data "aws_iam_policy_document" "github_assume_role_only" {
   statement {
-    effect = "Allow"
-    actions = ["sts:AssumeRole"]
+    effect    = "Allow"
+    actions   = ["sts:AssumeRole"]
     resources = [aws_iam_role.github_deploy.arn]
   }
 }
@@ -107,7 +105,6 @@ resource "aws_eks_access_policy_association" "github_role_admin" {
 # - POD_AWS_SECRET_ACCESS_KEY
 resource "aws_iam_user" "sagemaker_invoke" {
   name = "${var.project_name}-sagemaker-invoke"
-  tags = local.tags
 }
 
 data "aws_iam_policy_document" "invoke_sagemaker" {
