@@ -22,8 +22,6 @@ spec:
           envFrom:
             - configMapRef:
                 name: forecast-config
-            - secretRef:
-                name: aws-credentials
           readinessProbe:
             httpGet:
               path: /ready

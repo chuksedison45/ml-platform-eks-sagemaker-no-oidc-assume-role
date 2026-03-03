@@ -50,3 +50,47 @@ Features:
 - **Live polling** every 5 seconds (calls `GET /status` on Gateway)
 - Health table showing ownership, service version, status
 - **Test request interface** to send payloads through the gateway
+
+
+## Sample request bodies
+
+### Fraud (XGBoost)
+Send either a feature vector or raw CSV string.
+
+```json
+{"features": [0, 0, 0, 0, 0]}
+```
+
+Or:
+
+```json
+{"csv": "0,0,0,0,0"}
+```
+
+### Recs (Factorization Machines)
+Factorization Machines expects the SageMaker FM JSON format.
+
+```json
+{"features": [0, 1, 0, 0, 1]}
+```
+
+(We wrap it to: `{"instances":[{"features":[...]}]}`.)
+
+Optional compact one-hot (only if `RECS_NUM_USERS` and `RECS_NUM_ITEMS` are configured):
+
+```json
+{"userId": 42, "movieId": 7}
+```
+
+### Forecast (DeepAR)
+DeepAR expects `instances` with `start` and `target`.
+
+```json
+{
+  "start": "2011-01-01 00:00:00",
+  "target": [100, 101, 102, 103, 104, 105],
+  "num_samples": 50,
+  "output_types": ["mean", "quantiles"],
+  "quantiles": ["0.5", "0.9"]
+}
+```

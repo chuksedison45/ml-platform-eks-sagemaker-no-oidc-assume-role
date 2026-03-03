@@ -22,8 +22,6 @@ spec:
           envFrom:
             - configMapRef:
                 name: fraud-config
-            - secretRef:
-                name: aws-credentials
           readinessProbe:
             httpGet:
               path: /ready

@@ -22,8 +22,6 @@ spec:
           envFrom:
             - configMapRef:
                 name: recs-config
-            - secretRef:
-                name: aws-credentials
           readinessProbe:
             httpGet:
               path: /ready
