@@ -1,0 +1,96 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+  KUSTOMIZE_OVERLAY: ${{ vars.KUSTOMIZE_OVERLAY }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS creds (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: gha-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${{ secrets.ECR_REGISTRY }}"
+
+      - name: Build & Push images
+        run: |
+          TAG="${GITHUB_SHA}"
+          REG="${{ secrets.ECR_REGISTRY }}"
+          # Build services
+          docker build -t "$REG/${{ secrets.ECR_REPO_FRAUD }}:$TAG" services/fraud_service
+          docker build -t "$REG/${{ secrets.ECR_REPO_RECS }}:$TAG" services/recs_service
+          docker build -t "$REG/${{ secrets.ECR_REPO_FORECAST }}:$TAG" services/forecast_service
+          docker build -t "$REG/${{ secrets.ECR_REPO_GATEWAY }}:$TAG" services/gateway
+          docker build -t "$REG/${{ secrets.ECR_REPO_DASHBOARD }}:$TAG" services/dashboard
+
+          docker push "$REG/${{ secrets.ECR_REPO_FRAUD }}:$TAG"
+          docker push "$REG/${{ secrets.ECR_REPO_RECS }}:$TAG"
+          docker push "$REG/${{ secrets.ECR_REPO_FORECAST }}:$TAG"
+          docker push "$REG/${{ secrets.ECR_REPO_GATEWAY }}:$TAG"
+          docker push "$REG/${{ secrets.ECR_REPO_DASHBOARD }}:$TAG"
+
+      - name: Setup kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+          kubectl version --client
+
+            - name: Apply namespaces/quotas first
+        run: |
+          kubectl apply -f k8s/base/namespaces.yaml
+          kubectl apply -f k8s/base/quotas.yaml
+          kubectl apply -f k8s/base/limitranges.yaml
+
+      - name: Create AWS credentials secrets (B2)
+        run: |
+          for ns in fraud recs forecast; do
+            kubectl -n "$ns" create secret generic aws-credentials               --from-literal=AWS_ACCESS_KEY_ID="${{ secrets.POD_AWS_ACCESS_KEY_ID }}"               --from-literal=AWS_SECRET_ACCESS_KEY="${{ secrets.POD_AWS_SECRET_ACCESS_KEY }}"               --from-literal=AWS_SESSION_TOKEN="${{ secrets.POD_AWS_SESSION_TOKEN }}"               --dry-run=client -o yaml | kubectl apply -f -
+          done
+
+- name: Deploy with kustomize
+        run: |
+          TAG="${GITHUB_SHA}"
+          REG="${{ secrets.ECR_REGISTRY }}"
+          OVER="k8s/overlays/${KUSTOMIZE_OVERLAY}"
+
+          # Patch image tags in-place
+          pushd "$OVER"
+          kustomize edit set image             FRAUD_IMAGE="$REG/${{ secrets.ECR_REPO_FRAUD }}:$TAG"             RECS_IMAGE="$REG/${{ secrets.ECR_REPO_RECS }}:$TAG"             FORECAST_IMAGE="$REG/${{ secrets.ECR_REPO_FORECAST }}:$TAG"             GATEWAY_IMAGE="$REG/${{ secrets.ECR_REPO_GATEWAY }}:$TAG"             DASHBOARD_IMAGE="$REG/${{ secrets.ECR_REPO_DASHBOARD }}:$TAG"
+          popd
+
+          kubectl apply -k "$OVER"
+
+      - name: Rollout checks
+        run: |
+          kubectl -n fraud rollout status deploy/fraud --timeout=180s
+          kubectl -n recs rollout status deploy/recs --timeout=180s
+          kubectl -n forecast rollout status deploy/forecast --timeout=180s
+          kubectl -n platform rollout status deploy/gateway --timeout=180s
+          kubectl -n platform rollout status deploy/dashboard --timeout=180s
+
+      - name: Quick health check (gateway)
+        run: |
+          kubectl -n platform get svc gateway dashboard

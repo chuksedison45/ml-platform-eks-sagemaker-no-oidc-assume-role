@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forecast
+  namespace: forecast
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: forecast
+  template:
+    metadata:
+      labels:
+        app: forecast
+    spec:
+      serviceAccountName: forecast-sa
+      containers:
+        - name: forecast
+          image: FORECAST_IMAGE
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: forecast-config
+            - secretRef:
+                name: aws-credentials
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 2
