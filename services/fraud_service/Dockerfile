@@ -1,14 +1,13 @@
-\
 FROM public.ecr.aws/docker/library/python:3.11-slim
 
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-COPY requirements.txt .
+COPY services/fraud_service/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
+COPY services/fraud_service/app ./app
 COPY services/common ./services/common
 
 EXPOSE 8080
