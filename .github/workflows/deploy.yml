@@ -37,11 +37,14 @@ jobs:
           TAG="${GITHUB_SHA}"
           REG="${{ secrets.ECR_REGISTRY }}"
 
-          docker build -t "$REG/${{ secrets.ECR_REPO_FRAUD }}:$TAG" .
-          docker build -t "$REG/${{ secrets.ECR_REPO_RECS }}:$TAG" .
-          docker build -t "$REG/${{ secrets.ECR_REPO_FORECAST }}:$TAG" .
-          docker build -t "$REG/${{ secrets.ECR_REPO_GATEWAY }}:$TAG" .
-          docker build -t "$REG/${{ secrets.ECR_REPO_DASHBOARD }}:$TAG" services/dashboard
+          TAG="${GITHUB_SHA}"
+          REG="${{ secrets.ECR_REGISTRY }}"
+
+          docker build -f services/fraud_service/Dockerfile    -t "$REG/${{ secrets.ECR_REPO_FRAUD }}:$TAG" .
+          docker build -f services/recs_service/Dockerfile     -t "$REG/${{ secrets.ECR_REPO_RECS }}:$TAG" .
+          docker build -f services/forecast_service/Dockerfile -t "$REG/${{ secrets.ECR_REPO_FORECAST }}:$TAG" .
+          docker build -f services/gateway/Dockerfile          -t "$REG/${{ secrets.ECR_REPO_GATEWAY }}:$TAG" .
+          docker build -f services/dashboard/Dockerfile        -t "$REG/${{ secrets.ECR_REPO_DASHBOARD }}:$TAG" .
 
           docker push "$REG/${{ secrets.ECR_REPO_FRAUD }}:$TAG"
           docker push "$REG/${{ secrets.ECR_REPO_RECS }}:$TAG"
