@@ -22,5 +22,5 @@ images:
     newName: DASHBOARD_IMAGE
     newTag: latest
 
-patches:
-  - path: patches/expose_loadbalancers.yaml
+patchesStrategicMerge:
+  - patches/expose_loadbalancers.yaml
