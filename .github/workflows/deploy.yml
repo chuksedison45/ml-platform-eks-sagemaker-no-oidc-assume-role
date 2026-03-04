@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
@@ -19,33 +23,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS creds (static keys -> assume role)
+      - name: Configure AWS creds (static keys)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          role-session-name: gha-deploy
-          role-skip-session-tagging: true
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
         run: |
           aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${{ secrets.ECR_REGISTRY }}"
 
-      - name: Build & Push images
+      - name: Build images (and smoke test)
         run: |
-          TAG="${GITHUB_SHA}"
-          REG="${{ secrets.ECR_REGISTRY }}"
-
+          set -euxo pipefail
           TAG="${GITHUB_SHA}"
           REG="${{ secrets.ECR_REGISTRY }}"
 
           docker build --no-cache -f services/fraud_service/Dockerfile    -t "$REG/${{ secrets.ECR_REPO_FRAUD }}:$TAG" .
           docker build --no-cache -f services/recs_service/Dockerfile     -t "$REG/${{ secrets.ECR_REPO_RECS }}:$TAG" .
           docker build --no-cache -f services/forecast_service/Dockerfile -t "$REG/${{ secrets.ECR_REPO_FORECAST }}:$TAG" .
-          docker build -f services/gateway/Dockerfile          -t "$REG/${{ secrets.ECR_REPO_GATEWAY }}:$TAG" .
+          docker build --no-cache -f services/gateway/Dockerfile          -t "$REG/${{ secrets.ECR_REPO_GATEWAY }}:$TAG" .
 
-          docker build -t "$REG/${{ secrets.ECR_REPO_DASHBOARD }}:$TAG" services/dashboard
+          # dashboard must use its folder context (so package.json resolves)
+          docker build --no-cache -t "$REG/${{ secrets.ECR_REPO_DASHBOARD }}:$TAG" services/dashboard
+
+          # Smoke tests: fail fast if shared module is missing in the image
+          docker run --rm "$REG/${{ secrets.ECR_REPO_FRAUD }}:$TAG" python -c "from services.common.sagemaker_client import invoke_endpoint_raw; print('fraud ok')"
+          docker run --rm "$REG/${{ secrets.ECR_REPO_RECS }}:$TAG" python -c "from services.common.sagemaker_client import invoke_endpoint_raw; print('recs ok')"
+          docker run --rm "$REG/${{ secrets.ECR_REPO_FORECAST }}:$TAG" python -c "from services.common.sagemaker_client import invoke_endpoint_raw; print('forecast ok')"
+
+      - name: Push images
+        run: |
+          set -euxo pipefail
+          TAG="${GITHUB_SHA}"
+          REG="${{ secrets.ECR_REGISTRY }}"
 
           docker push "$REG/${{ secrets.ECR_REPO_FRAUD }}:$TAG"
           docker push "$REG/${{ secrets.ECR_REPO_RECS }}:$TAG"
@@ -67,24 +79,15 @@ jobs:
           sudo mv kustomize /usr/local/bin/kustomize
           kustomize version
 
-      - name: Apply namespaces/quotas first
+      - name: Apply namespaces/quotas/limitranges
         run: |
           kubectl apply -f k8s/base/namespaces.yaml
           kubectl apply -f k8s/base/quotas.yaml
           kubectl apply -f k8s/base/limitranges.yaml
 
-      - name: Create AWS credentials secrets (B2)
-        run: |
-          for ns in fraud recs forecast; do
-            kubectl -n "$ns" create secret generic aws-credentials \
-              --from-literal=AWS_ACCESS_KEY_ID="${{ secrets.POD_AWS_ACCESS_KEY_ID }}" \
-              --from-literal=AWS_SECRET_ACCESS_KEY="${{ secrets.POD_AWS_SECRET_ACCESS_KEY }}" \
-              --from-literal=AWS_SESSION_TOKEN="${{ secrets.POD_AWS_SESSION_TOKEN }}" \
-              --dry-run=client -o yaml | kubectl apply -f -
-          done
-
       - name: Deploy with kustomize
         run: |
+          set -euxo pipefail
           TAG="${GITHUB_SHA}"
           REG="${{ secrets.ECR_REGISTRY }}"
           OVER="k8s/overlays/${KUSTOMIZE_OVERLAY}"
@@ -100,13 +103,27 @@ jobs:
 
           kubectl apply -k "$OVER"
 
-      - name: Rollout checks
+      - name: Rollout checks (with debug on failure)
         run: |
-          kubectl -n fraud rollout status deploy/fraud --timeout=240s
-          kubectl -n recs rollout status deploy/recs --timeout=240s
-          kubectl -n forecast rollout status deploy/forecast --timeout=240s
-          kubectl -n platform rollout status deploy/gateway --timeout=240s
-          kubectl -n platform rollout status deploy/dashboard --timeout=240s
+          set -e
+          check() {
+            ns="$1"; dep="$2"; label="$3"
+            echo "== rollout $ns/$dep =="
+            kubectl -n "$ns" rollout status "deploy/$dep" --timeout=600s || {
+              echo "---- describe deploy ----"
+              kubectl -n "$ns" describe "deploy/$dep" || true
+              echo "---- pods ----"
+              kubectl -n "$ns" get pods -l "app=$label" -o wide || true
+              echo "---- logs ----"
+              kubectl -n "$ns" logs "deploy/$dep" --tail=200 || true
+              exit 1
+            }
+          }
+          check fraud fraud fraud
+          check recs recs recs
+          check forecast forecast forecast
+          check platform gateway gateway
+          check platform dashboard dashboard
 
       - name: Health check (gateway)
         run: |
