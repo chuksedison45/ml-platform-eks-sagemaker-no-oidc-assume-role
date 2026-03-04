@@ -52,6 +52,7 @@ flowchart LR
   recs -->|InvokeEndpoint| sm
   fcst -->|InvokeEndpoint| sm
 ```
+<img src="architecture.png" width="800" height="600" alt="Architecture">
 
 ---
 
