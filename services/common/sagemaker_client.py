@@ -1,15 +1,26 @@
+from __future__ import annotations
 import os
 import json
 import boto3
 from botocore.config import Config
 
-
-def make_sm_runtime(region: str | None = None):
+def make_sm_runtime(region: str | None = None, timeout_seconds: int | None = None):
+    """
+    Create SageMaker Runtime client.
+    - region: AWS region
+    - timeout_seconds: connect/read timeout for InvokeEndpoint (optional)
+    """
     region = region or os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-west-2"
+
+    cfg_kwargs = {"retries": {"max_attempts": 3, "mode": "standard"}}
+    if timeout_seconds is not None:
+        cfg_kwargs["connect_timeout"] = int(timeout_seconds)
+        cfg_kwargs["read_timeout"] = int(timeout_seconds)
+
     return boto3.client(
         "sagemaker-runtime",
         region_name=region,
-        config=Config(retries={"max_attempts": 3, "mode": "standard"}),
+        config=Config(**cfg_kwargs),
     )
 
 
